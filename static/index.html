@@ -7,24 +7,24 @@
 		<script type="text/javascript">
 			window.onload = function() {
                 UpdateStatus();
-                
+
                 $.get('/song/list')
                 .done(function(data) {
+                    data.sort();
                     var list = $('#SongList');
                     $.each(data, function(index, val) {
-                        $('#SongList').append('<li><form action="/song/next' + val + '" method="POST"><input type="submit" value="' + val + '"></form></li>')
+                        $('#SongList').append('<li><form action="/song/next' + val + '" method="POST"><input type="submit" value="Queue Song">' + val + '</form></li>')
                     });
                 });
 			};
-            
+
             UpdateStatus = function() {
                 $.get('/song/current')
                 .done(function(data) {
                     $('#CurrentlyPlaying').text(data);
-                    
                 });
-                
-                setTimeout(UpdateStatus, 1000);
+
+                setTimeout(UpdateStatus, 5000);
             };
 		</script>
 	</head>

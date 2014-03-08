@@ -2,8 +2,7 @@ body {
     background: black;
     color: white;
 }
-input {
-    background: none;
-    border: none;
+form {
+    width: 100%;
     color: white;
 }
