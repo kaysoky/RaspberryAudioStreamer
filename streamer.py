@@ -1,236 +1,255 @@
-import os, sys, errno
+import os
+import sys
+import errno
 import traceback
-import thread, random, time, json
+import thread
+import random
+import time
+import json
 from subprocess import call
-from threading import Lock
-from Queue import Queue
+from threading import Thread, Lock, Queue
 
 import webbrowser
 from dropbox import client
-from dropbox.rest import ErrorResponse, RESTSocketError
-from httplib import BadStatusLine
 
-###############################################################################
-##                                  Globals                                  ##
-###############################################################################
-
+# Dropbox application specific data
 APP_KEY = 'kpvw9op95082dzj'
 APP_SECRET = 'm953vw8r3mz45gq'
-MUSIC_CACHE = os.path.expanduser('./.cache')
 TOKEN_FILE = "token.txt"
+MUSIC_FOLDER = '/Ambience'
+
+# Caching locations to improve performance/resource utilization
+MUSIC_CACHE = os.path.expanduser('./.cache')
 INDEX_FILE = "index.json"
-MUSIC_LIST_UPDATE_TIME = 60 * 60 # 1 hour
 MUSIC_BUFFER_SIZE = 3
-GENERAL_SLEEP_TIME = 15
 MUSIC_READ_CHUNK_SIZE = 1024
 
-Streamer = None
-StreamerLock = Lock()
-MusicList = []
-MusicListLock = Lock()
-MusicQueue = Queue()
-UniqueExceptionsLock = Lock()
-UniqueExceptions = set()
+# Timing constants
+MUSIC_LIST_UPDATE_TIME = 60 * 60 # 1 hour
+GENERAL_SLEEP_TIME = 15
 
-# Only used by the music player thread
-CurrentSong = [None]
+class MusicListUpdater(Thread):
+    def __init__(self, shared):
+        self.shared = shared
 
-###############################################################################
-##                              Thread Helpers                               ##
-###############################################################################
-
-def fetchMusicList():
-    """
-    Traverses down two levels into the /Ambience folder
-      and builds a list of all MP3's found.
-    Replaces MusicList with the new list.
-    """
-
-    newMusicList = []
-
-    StreamerLock.acquire()
-    artists = None
-    try:
-        artists = Streamer.metadata('/Ambience')['contents']
-    finally:
-        StreamerLock.release()
-    if artists is None: return
-
-    for artist in artists:
-        if not artist.get('is_dir', False) or 'path' not in artist:
-            continue
-
-        StreamerLock.acquire()
-        music = None
+    def run(self):
+        # Load in a cached music list
         try:
-            music = Streamer.metadata(artist['path'])['contents']
-        finally:
-            StreamerLock.release()
-        if music is None: continue
+            self.shared.MusicListLock.acquire()
+            with open(INDEX_FILE, 'r') as file:
+                self.shared.MusicList = json.load(file)
 
-        for audio in music:
-            # Only keep MP3's
-            if audio.get('mime_type', 'Something Else') != u'audio/mpeg':
+            print "Loaded music list"
+            time.sleep(MUSIC_LIST_UPDATE_TIME)
+
+        except:
+            traceback.print_exc()
+
+        finally:
+            self.shared.MusicListLock.release()
+
+        while True:
+            try:
+                self._perform_update()
+            except:
+                traceback.print_exc()
+                time.sleep(GENERAL_SLEEP_TIME)
+
+            # Keep trying if the fetch fails
+            if len(self.shared.MusicList) <= 0:
                 continue
 
-            if 'path' in audio:
-                newMusicList.append(audio['path'])
+            time.sleep(MUSIC_LIST_UPDATE_TIME)
 
-    # Copy the list over
-    MusicListLock.acquire()
-    del MusicList[:]
-    for item in newMusicList:
-        MusicList.append(item)
+    def _perform_update(self):
+        """
+        Traverses down two levels into the music folder
+          and builds a list of all MP3's found.
+        Replaces MusicList with the new list.
+        """
 
-    # And save the list in a file
-    with open(INDEX_FILE, 'w') as file:
-        json.dump(newMusicList, file)
-    MusicListLock.release()
-    print '[Music list updated]'
+        # Initialize the new list
+        newMusicList = []
 
-
-def fillMusicBuffer(musicSource=None):
-    """
-    Navigates the music list at random and downloads music to play.
-    """
-
-    # Choose a song
-    if musicSource is None:
-        if len(MusicList) <= 0:
-            return
-        MusicListLock.acquire()
         try:
-            musicSource = MusicList[random.randrange(len(MusicList))]
+            self.shared.DropboxLock.acquire()
+
+            # Fetch all the metadata about the music-containing folder
+            delta = self.shared.Dropbox.delta(path_prefix=MUSIC_FOLDER)
+            for path, metadata in delta['entries']:
+                if metadata is None:
+                    continue
+
+                if metadata.get('mime_type', 'Something Else') != u'audio/mpeg':
+                    continue
+
+                if 'path' in audio:
+                    newMusicList.append(path)
+
         finally:
-            MusicListLock.release()
+            self.shared.DropboxLock.release()
 
-    # Download the song
-    musicDestPath = os.path.join(MUSIC_CACHE, 
-                                 os.path.basename(os.path.dirname(musicSource)), 
-                                 os.path.basename(musicSource))
-    try: os.makedirs(os.path.dirname(musicDestPath))
-    except: pass
-    musicDest = open(musicDestPath, "wb")
-    StreamerLock.acquire()
-    try:
-        source, metadata = Streamer.get_file_and_metadata(musicSource)
-        musicDest.write(source.read())
-        musicDest.close()
-        source.close()
-
-        # Add it to the playlist
-        MusicQueue.put(musicDestPath)
-    finally:
-        StreamerLock.release()
-
-
-def handleException():
-    UniqueExceptionsLock.acquire()
-    exception = traceback.format_exc()
-    if exception not in UniqueExceptions:
-        UniqueExceptions.add(exception)
-        print exception
-    UniqueExceptionsLock.release()
-
-
-###############################################################################
-##                              Authentication                               ##
-###############################################################################
-
-try:
-    # Token is saved locally
-    token = open(TOKEN_FILE).read()
-    Streamer = client.DropboxClient(token)
-    print "[loaded access token]"
-except IOError:
-    # Token not available, so login
-    flow = client.DropboxOAuth2FlowNoRedirect(APP_KEY, APP_SECRET)
-    authorize_url = flow.start()
-    webbrowser.open(authorize_url)
-    code = raw_input("Enter the authorization code here: ").strip()
-
-    try:
-        access_token, user_id = flow.finish(code)
-    except ErrorResponse:
-        handleException()
-        exit()
-
-    with open(TOKEN_FILE, 'w') as f:
-        f.write(access_token)
-    Streamer = client.DropboxClient(access_token)
-
-###############################################################################
-##                               Music Player                                ##
-###############################################################################
-
-def updateMusicList():
-    try:
-        with open(INDEX_FILE, 'r') as file:
-            loadedMusicList = json.load(file)
-            for item in loadedMusicList:
-                MusicList.append(item)
-        print "Loaded music list"
-        time.sleep(MUSIC_LIST_UPDATE_TIME)
-    except:
-        handleException()
-
-    while True:
+        # Copy the list over
         try:
-            fetchMusicList()
-        except:
-            handleException()
+            self.shared.MusicListLock.acquire()
+            self.shared.MusicList = newMusicList
 
-        # Keep trying if the fetch fails
-        if len(MusicList) <= 0:
-            continue
+            # Save the list in a file
+            with open(INDEX_FILE, 'w') as file:
+                json.dump(newMusicList, file)
+            print '[Music list updated]'
 
-        time.sleep(MUSIC_LIST_UPDATE_TIME)
+        finally:
+            self.shared.MusicListLock.release()
 
-def updateMusicBuffer():
-    while True:
-        if MusicQueue.qsize() < MUSIC_BUFFER_SIZE:
-            try:
-                fillMusicBuffer()
-            except:
-                handleException()
-        else:
-            time.sleep(GENERAL_SLEEP_TIME)
+class MusicBufferer(Thread):
+    def __init__(self, shared):
+        self.shared = shared
+        self.queue = Queue()
 
-def playMusic():
-    while True:
-        try:
-            if MusicQueue.qsize() > 0:
-                nextSong = MusicQueue.get()
-                CurrentSong[0] = nextSong
-                call(["mpg123", "--buffer", "4096", "--smooth", "--quiet", nextSong])
-                os.remove(nextSong)
+    def run(self):
+        while True:
+            if self.shared.MusicQueue.qsize() < MUSIC_BUFFER_SIZE:
+                try:
+                    if self.queue.qsize() > 0:
+                        self._downloadSong()
+                    else:
+                        self.addSong()
+                except:
+                    traceback.print_exc()
+                    time.sleep(GENERAL_SLEEP_TIME)
             else:
-                time.sleep(0)
-        except KeyboardInterrupt:
-            exit()
-        except SystemExit:
-            print "Exit caught"
-        except:
-            handleException()
+                time.sleep(GENERAL_SLEEP_TIME)
 
-def do_main(async=True):
-    # Set the volume to 100%
-    call(['amixer', 'sset', "'PCM'", '100%'])
+    def addSong(self, musicSource=None):
+        """
+        Navigates the music list at random and chooses a song to download
+        If the song is provided, the internal download queue is emptied
+        """
 
-    # Empty the cache of old music
-    call(['rm', '-r', MUSIC_CACHE])
+        try:
+            self.shared.MusicListLock.acquire()
+            # Choose a song
+            if musicSource is None:
+                if len(self.shared.MusicList) <= 0:
+                    return
+                musicSource = self.shared.MusicList[random.randrange(len(self.shared.MusicList))]
+            else:
+                while not self.queue.empty():
+                    self.queue.get()
 
-    # Make the cache directory
-    try: os.makedirs(MUSIC_CACHE)
-    except: pass
+            # Queue the song for download
+            self.queue.put(musicSource)
 
-    # Start all the background threads
-    thread.start_new_thread(updateMusicList, ())
-    thread.start_new_thread(updateMusicBuffer, ())
-    if async:
-        thread.start_new_thread(playMusic, ())
-    else:
-        playMusic()
+        finally:
+            self.shared.MusicListLock.release()
+
+    def _downloadSong(self):
+        """
+        Pops a song off the internal queue and downloads it
+        """
+
+        # Determine where to download the song
+        musicSource = self.queue.get()
+        musicDestPath = os.path.join(MUSIC_CACHE,
+                                     os.path.basename(os.path.dirname(musicSource)),
+                                     os.path.basename(musicSource))
+        try: os.makedirs(os.path.dirname(musicDestPath))
+        except: pass
+
+        # Download the song
+        musicDest = open(musicDestPath, "wb")
+        self.shared.DropboxLock.acquire()
+        try:
+            source, metadata = self.shared.Dropbox.get_file_and_metadata(musicSource)
+            musicDest.write(source.read())
+            musicDest.close()
+            source.close()
+
+            # Add it to the playlist
+            self.shared.MusicQueue.put(musicDestPath)
+
+        finally:
+            self.shared.DropboxLock.release()
+
+class MusicPlayer(Thread):
+    def __init__(self, shared):
+        self.shared = shared
+
+    def run(self):
+        while True:
+            try:
+                if self.shared.MusicQueue.qsize() > 0:
+                    self.shared.CurrentSong = self.shared.MusicQueue.get()
+                    call(["mpg123", "--buffer", "4096", "--smooth", "--quiet", self.shared.CurrentSong])
+                    os.remove(self.shared.CurrentSong)
+                else:
+                    time.sleep(GENERAL_SLEEP_TIME)
+            except:
+                traceback.print_exc()
+
+class DropboxAudioStreamer():
+    def __init__(self):
+        """
+        Initializes the audio streamer and connects to Dropbox
+        """
+
+        self.Dropbox = None
+        self.DropboxLock = Lock()
+        self.MusicList = []
+        self.MusicListLock = Lock()
+        self.MusicQueue = Queue()
+        self.CurrentSong = None
+
+        # Connect to Dropbox
+        try:
+            # Token is saved locally
+            token = open(TOKEN_FILE).read()
+            self.Dropbox = client.DropboxClient(token)
+            print "[loaded access token]"
+        except IOError:
+            # Token not available, so login
+            flow = client.DropboxOAuth2FlowNoRedirect(APP_KEY, APP_SECRET)
+            authorize_url = flow.start()
+            webbrowser.open(authorize_url)
+            code = raw_input("Enter the authorization code here: ").strip()
+
+            try:
+                access_token, user_id = flow.finish(code)
+            except ErrorResponse:
+                handleException()
+                exit()
+
+            with open(TOKEN_FILE, 'w') as f:
+                f.write(access_token)
+            self.Dropbox = client.DropboxClient(access_token)
+
+        # Set the volume to 100%
+        call(['amixer', 'sset', "'PCM'", '100%'])
+
+        # Empty the cache of old music
+        call(['rm', '-r', MUSIC_CACHE])
+
+        # Make the cache directory
+        try: os.makedirs(MUSIC_CACHE)
+        except: pass
+
+        # Start the child threads
+        self.MusicListUpdater = MusicListUpdater(self)
+        self.MusicListUpdater.daemon = True
+        self.MusicListUpdater.start()
+
+        self.MusicBufferer = MusicBufferer(self)
+        self.MusicBufferer.daemon = True
+        self.MusicBufferer.start()
+
+    def start(self, async=True):
+        self.MusicPlayer = MusicPlayer(self)
+        if async:
+            self.MusicPlayer.daemon = True
+            self.MusicPlayer.start()
+        else:
+            self.MusicPlayer.run()
 
 if __name__ == '__main__':
-    do_main(False)
+    DropboxAudioStreamer().start(False)
