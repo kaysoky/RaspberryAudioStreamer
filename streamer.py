@@ -8,7 +8,7 @@ import time
 import json
 from subprocess import call
 from threading import Thread, Lock
-from Queue import Queue
+from Queue import Queue, Empty
 
 import webbrowser
 from dropbox import client
@@ -41,7 +41,7 @@ class MusicListUpdater(Thread):
             with open(INDEX_FILE, 'r') as file:
                 self.shared.MusicList = json.load(file)
 
-            print "Loaded music list"
+            print "[Loaded music list]"
             time.sleep(MUSIC_LIST_UPDATE_TIME)
 
         except:
@@ -152,7 +152,10 @@ class MusicBufferer(Thread):
         """
 
         # Determine where to download the song
-        musicSource = self.queue.get()
+        try:
+            musicSource = self.queue.get(False)
+        except Empty:
+            return
         musicDestPath = os.path.join(MUSIC_CACHE,
                                      os.path.basename(os.path.dirname(musicSource)),
                                      os.path.basename(musicSource))
@@ -161,8 +164,8 @@ class MusicBufferer(Thread):
 
         # Download the song
         musicDest = open(musicDestPath, "wb")
-        self.shared.DropboxLock.acquire()
         try:
+            self.shared.DropboxLock.acquire()
             source, metadata = self.shared.Dropbox.get_file_and_metadata(musicSource)
             musicDest.write(source.read())
             musicDest.close()

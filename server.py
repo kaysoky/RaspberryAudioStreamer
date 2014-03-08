@@ -19,6 +19,7 @@ class generic_getter:
 
 class current_song:
     def GET(self):
+        web.header('Content-Type', 'application/text')
         return web.streamer.CurrentSong
         
 class song_list:
