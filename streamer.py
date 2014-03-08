@@ -42,13 +42,12 @@ class MusicListUpdater(Thread):
                 self.shared.MusicList = json.load(file)
 
             print "[Loaded music list]"
-            time.sleep(MUSIC_LIST_UPDATE_TIME)
-
         except:
             traceback.print_exc()
 
         finally:
             self.shared.MusicListLock.release()
+        time.sleep(MUSIC_LIST_UPDATE_TIME)
 
         while True:
             try:
