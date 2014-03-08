@@ -7,7 +7,8 @@ import random
 import time
 import json
 from subprocess import call
-from threading import Thread, Lock, Queue
+from threading import Thread, Lock
+from Queue import Queue
 
 import webbrowser
 from dropbox import client
@@ -30,6 +31,7 @@ GENERAL_SLEEP_TIME = 15
 
 class MusicListUpdater(Thread):
     def __init__(self, shared):
+        Thread.__init__(self)
         self.shared = shared
 
     def run(self):
@@ -75,7 +77,7 @@ class MusicListUpdater(Thread):
             self.shared.DropboxLock.acquire()
 
             # Fetch all the metadata about the music-containing folder
-            delta = self.shared.Dropbox.delta(path_prefix=MUSIC_FOLDER)
+            delta = self.shared.Dropbox.delta(None, MUSIC_FOLDER)
             for path, metadata in delta['entries']:
                 if metadata is None:
                     continue
@@ -83,8 +85,7 @@ class MusicListUpdater(Thread):
                 if metadata.get('mime_type', 'Something Else') != u'audio/mpeg':
                     continue
 
-                if 'path' in audio:
-                    newMusicList.append(path)
+                newMusicList.append(path)
 
         finally:
             self.shared.DropboxLock.release()
@@ -104,6 +105,7 @@ class MusicListUpdater(Thread):
 
 class MusicBufferer(Thread):
     def __init__(self, shared):
+        Thread.__init__(self)
         self.shared = shared
         self.queue = Queue()
 
@@ -174,6 +176,7 @@ class MusicBufferer(Thread):
 
 class MusicPlayer(Thread):
     def __init__(self, shared):
+        Thread.__init__(self)
         self.shared = shared
 
     def run(self):
@@ -185,6 +188,8 @@ class MusicPlayer(Thread):
                     os.remove(self.shared.CurrentSong)
                 else:
                     time.sleep(GENERAL_SLEEP_TIME)
+            except KeyboardInterrupt:
+                exit()
             except:
                 traceback.print_exc()
 
