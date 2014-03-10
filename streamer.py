@@ -47,7 +47,9 @@ class MusicListUpdater(Thread):
 
         finally:
             self.shared.MusicListLock.release()
-        time.sleep(MUSIC_LIST_UPDATE_TIME)
+        
+        if len(self.shared.MusicList) > 0:
+            time.sleep(MUSIC_LIST_UPDATE_TIME)
 
         while True:
             try:
