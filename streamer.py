@@ -135,9 +135,6 @@ class MusicBufferer(Thread):
                 if len(self.shared.MusicList) <= 0:
                     return
                 musicSource = self.shared.MusicList[random.randrange(len(self.shared.MusicList))]
-            else:
-                while not self.queue.empty():
-                    self.queue.get()
 
             # Queue the song for download
             self.queue.put(musicSource)
