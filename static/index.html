@@ -5,7 +5,9 @@
         <link rel="stylesheet" type="text/css" href="static/Style.css" />
 		<script type="text/javascript" src="static/jquery-1.8.3.min.js"></script>
 		<script type="text/javascript">
-			window.onload = function() {
+            var SongList = [];            
+
+            window.onload = function() {
                 UpdateStatus();
 
                 $.get('/song/list')
@@ -13,7 +15,15 @@
                     data.sort();
                     var list = $('#SongList');
                     $.each(data, function(index, val) {
-                        $('#SongList').append('<li><form action="/song/next' + val + '" method="POST"><input type="submit" value="Queue Song">' + val + '</form></li>')
+                        AddSongToList(val);
+                    });
+
+                    // Store the list
+                    SongList = data;
+
+                    // Activate the filter box
+                    $('#FilterBox').keyup(function() {
+                        FilterSongList($('#FilterBox').val());
                     });
                 });
 			};
@@ -26,6 +36,19 @@
 
                 setTimeout(UpdateStatus, 5000);
             };
+
+            FilterSongList = function(includes) {
+                $('#SongList').empty();
+                $.each(SongList, function(index, val) {
+                    if (val.indexOf(includes) >= 0) {
+                        AddSongToList(val);
+                    }
+                });
+            };
+
+            AddSongToList = function(val) {
+                $('#SongList').append('<li><form action="/song/next' + val + '" method="POST"><input type="submit" value="Queue Song">' + val + '</form></li>')
+            };
 		</script>
 	</head>
 	<body>
@@ -35,8 +58,8 @@
             <form action="song/next" method="POST">
                 <input type="submit" value="Skip Song">
             </form>
+            Filter Song List: <input type="text" value="" id="FilterBox">
         </center>
-        <h1>Available Music</h1>
         <ul id="SongList"></ul>
 	</body>
 </html>
