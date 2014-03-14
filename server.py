@@ -1,5 +1,6 @@
 import web
 import json
+from subprocess import call
 from streamer import DropboxAudioStreamer
 
 urls = (
@@ -7,7 +8,8 @@ urls = (
     '/static/(.*)', 'generic_getter', 
     '/song/current', 'current_song', 
     '/song/list', 'song_list', 
-    '/song/next(/.*)', 'next_song'
+    '/song/next(/.*)', 'next_song',
+    '/song/next', 'skip_song'
 )
 
 class generic_getter:
@@ -34,6 +36,11 @@ class song_list:
 class next_song:
     def POST(self, name):
         web.streamer.MusicBufferer.addSong(name)
+        raise web.seeother('/')
+
+class skip_song:
+    def POST(self):
+        call(['killall', 'mpg123'])
         raise web.seeother('/')
 
 web.internalerror = web.debugerror
