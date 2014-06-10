@@ -5,7 +5,8 @@
         <link rel="stylesheet" type="text/css" href="static/Style.css" />
 		<script type="text/javascript" src="static/jquery-1.8.3.min.js"></script>
 		<script type="text/javascript">
-            var SongList = [];            
+            var SongList = [];
+            var listSizeLimit = 100;
 
             window.onload = function() {
                 UpdateStatus();
@@ -14,9 +15,9 @@
                 .done(function(data) {
                     data.sort();
                     var list = $('#SongList');
-                    $.each(data, function(index, val) {
-                        AddSongToList(val);
-                    });
+                    for (var i = 0; i < data.length && i < listSizeLimit; i++) {
+                        AddSongToList(data[i]);
+                    }
 
                     // Store the list
                     SongList = data;
@@ -39,11 +40,13 @@
 
             FilterSongList = function(includes) {
                 $('#SongList').empty();
-                $.each(SongList, function(index, val) {
-                    if (val.indexOf(includes) >= 0) {
-                        AddSongToList(val);
+                var included = 0;
+                for (var i = 0; i < SongList.length && included < listSizeLimit; i++) {
+                    if (SongList[i].indexOf(includes) >= 0) {
+                        AddSongToList(SongList[i]);
+                        included++;
                     }
-                });
+                }
             };
 
             AddSongToList = function(val) {
