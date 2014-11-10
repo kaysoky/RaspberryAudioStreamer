@@ -5,6 +5,7 @@ import traceback
 import thread
 import random
 import time
+from datetime import datetime
 import json
 from subprocess import call
 from threading import Thread, Lock
@@ -28,6 +29,7 @@ MUSIC_READ_CHUNK_SIZE = 1024
 # Timing constants
 MUSIC_LIST_UPDATE_TIME = 60 * 60 # 1 hour
 GENERAL_SLEEP_TIME = 15
+RECENT_MUSIC_DAYS = 7
 
 class MusicListUpdater(Thread):
     def __init__(self, shared):
@@ -73,12 +75,14 @@ class MusicListUpdater(Thread):
 
         # Initialize the new list
         newMusicList = []
+        newRecentList = []
 
         try:
             self.shared.DropboxLock.acquire()
 
             # Fetch all the metadata about the music-containing folder
             delta = self.shared.Dropbox.delta(None, MUSIC_FOLDER)
+            currentTime = datetime.now()
             for path, metadata in delta['entries']:
                 if metadata is None:
                     continue
@@ -86,7 +90,15 @@ class MusicListUpdater(Thread):
                 if metadata.get('mime_type', 'Something Else') != u'audio/mpeg':
                     continue
 
+                # Append the properly capitalized name
+                path = metadata.get('path', path)
                 newMusicList.append(path)
+                
+                # Get the modification date
+                modified = metadata.get('modified', 'Tue, 19 Jul 2011 21:55:38 +0000')[:-6]
+                modified = datetime.strptime(modified, '%a, %d %b %Y %H:%M:%S')
+                if (currentTime - modified).days < RECENT_MUSIC_DAYS:
+                    newRecentList.append(path)
 
         finally:
             self.shared.DropboxLock.release()
@@ -95,6 +107,7 @@ class MusicListUpdater(Thread):
         try:
             self.shared.MusicListLock.acquire()
             self.shared.MusicList = newMusicList
+            self.shared.RecentMusicList = newRecentList
 
             # Save the list in a file
             with open(INDEX_FILE, 'w') as file:
@@ -127,7 +140,8 @@ class MusicBufferer(Thread):
     def addSong(self, musicSource=None):
         """
         Navigates the music list at random and chooses a song to download
-        If the song is provided, the internal download queue is emptied
+            There is a bias towards more recent music
+        If the song is provided, that song is added instead
         """
 
         try:
@@ -136,7 +150,16 @@ class MusicBufferer(Thread):
             if musicSource is None:
                 if len(self.shared.MusicList) <= 0:
                     return
-                musicSource = self.shared.MusicList[random.randrange(len(self.shared.MusicList))]
+                    
+                # Get a random number with a bias towards the newer stuff
+                musicLength = len(self.shared.MusicList)
+                recentLength = len(self.shared.RecentMusicList)
+                idx = random.randrange(musicLength + recentLength * 100)
+                if idx < musicLength:
+                    musicSource = self.shared.MusicList[idx]
+                else:
+                    idx = idx % recentLength
+                    musicSource = self.shared.RecentMusicList[idx]
 
             # Queue the song for download
             self.queue.put(musicSource)
@@ -203,6 +226,7 @@ class DropboxAudioStreamer():
         self.Dropbox = None
         self.DropboxLock = Lock()
         self.MusicList = []
+        self.RecentMusicList = []
         self.MusicListLock = Lock()
         self.MusicQueue = Queue()
         self.CurrentSong = None
