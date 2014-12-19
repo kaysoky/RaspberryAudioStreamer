@@ -27,7 +27,7 @@
                         FilterSongList($('#FilterBox').val());
                     });
                 });
-			};
+            };
 
             UpdateStatus = function() {
                 $.get('/song/current')
@@ -50,7 +50,7 @@
             };
 
             AddSongToList = function(val) {
-                $('#SongList').append('<li><form action="/song/next' + val + '" method="POST"><input type="submit" value="Queue Song">' + val + '</form></li>')
+                $('#SongList').append('<li><input type="button" value="Queue" onclick="$.post(\'/song/next' + val + '\')">' + val + '</li>')
             };
 		</script>
 	</head>
@@ -58,9 +58,7 @@
         <center>
             <h1>Currently Playing</h1>
             <h2 id="CurrentlyPlaying"></h2>
-            <form action="song/next" method="POST">
-                <input type="submit" value="Skip Song">
-            </form>
+            <input type="button" value="Skip Song" onclick="$.post('/song/next')" /></br>
             Filter Song List: <input type="text" value="" id="FilterBox">
         </center>
         <ul id="SongList"></ul>
