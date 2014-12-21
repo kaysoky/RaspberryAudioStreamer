@@ -154,7 +154,7 @@ class MusicBufferer(Thread):
                 # Get a random number with a bias towards the newer stuff
                 musicLength = len(self.shared.MusicList)
                 recentLength = len(self.shared.RecentMusicList)
-                idx = random.randrange(musicLength + min(musicLength / 2, recentLength * 100))
+                idx = random.randrange(musicLength + min(musicLength / 2, recentLength * 10))
                 if idx < musicLength:
                     musicSource = self.shared.MusicList[idx]
                 else:
