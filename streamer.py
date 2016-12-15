@@ -81,24 +81,32 @@ class MusicListUpdater(Thread):
             self.shared.DropboxLock.acquire()
 
             # Fetch all the metadata about the music-containing folder
-            delta = self.shared.Dropbox.delta(None, MUSIC_FOLDER)
             currentTime = datetime.now()
-            for path, metadata in delta['entries']:
-                if metadata is None:
-                    continue
+            cursor = None
+            delta = self.shared.Dropbox.delta(cursor, MUSIC_FOLDER)
 
-                if metadata.get('mime_type', 'Something Else') != u'audio/mpeg':
-                    continue
+            while len(delta['entries']) > 0 or delta['has_more']:
+                for path, metadata in delta['entries']:
+                    if metadata is None:
+                        continue
 
-                # Append the properly capitalized name
-                path = metadata.get('path', path)
-                newMusicList.append(path)
+                    if metadata.get('mime_type', 'Something Else') != u'audio/mpeg':
+                        continue
+
+                    # Append the properly capitalized name
+                    path = metadata.get('path', path)
+                    newMusicList.append(path)
                 
-                # Get the modification date
-                modified = metadata.get('modified', 'Tue, 19 Jul 2011 21:55:38 +0000')[:-6]
-                modified = datetime.strptime(modified, '%a, %d %b %Y %H:%M:%S')
-                if (currentTime - modified).days < RECENT_MUSIC_DAYS:
-                    newRecentList.append(path)
+                    # Get the modification date
+                    modified = metadata.get('modified', 'Tue, 19 Jul 2011 21:55:38 +0000')[:-6]
+                    modified = datetime.strptime(modified, '%a, %d %b %Y %H:%M:%S')
+                    if (currentTime - modified).days < RECENT_MUSIC_DAYS:
+                        newRecentList.append(path)
+
+                cursor = delta['cursor']
+                delta = self.shared.Dropbox.delta(cursor, MUSIC_FOLDER)
+        except:
+            traceback.print_exc()
 
         finally:
             self.shared.DropboxLock.release()
